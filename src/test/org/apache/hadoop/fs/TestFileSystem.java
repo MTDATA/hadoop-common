@@ -26,6 +26,10 @@ import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.net.URI;
 import java.security.PrivilegedExceptionAction;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.Random;
+import java.util.List;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -589,6 +593,37 @@ public class TestFileSystem extends TestCase {
     }
   }
 
+  public void testFsShutdownHook() throws Exception {
+    final Set<FileSystem> closed = Collections.synchronizedSet(new HashSet<FileSystem>());
+    Configuration conf = new Configuration();
+    Configuration confNoAuto = new Configuration();
+
+    conf.setClass("fs.test.impl", TestShutdownFileSystem.class, FileSystem.class);
+    confNoAuto.setClass("fs.test.impl", TestShutdownFileSystem.class, FileSystem.class);
+    confNoAuto.setBoolean("fs.automatic.close", false);
+
+    TestShutdownFileSystem fsWithAuto =
+      (TestShutdownFileSystem)(new Path("test://a/").getFileSystem(conf));
+    TestShutdownFileSystem fsWithoutAuto =
+      (TestShutdownFileSystem)(new Path("test://b/").getFileSystem(confNoAuto));
+
+    fsWithAuto.setClosedSet(closed);
+    fsWithoutAuto.setClosedSet(closed);
+
+    // Different URIs should result in different FS instances
+    assertNotSame(fsWithAuto, fsWithoutAuto);
+
+    FileSystem.CACHE.closeAll(true);
+    assertEquals(1, closed.size());
+    assertTrue(closed.contains(fsWithAuto));
+
+    closed.clear();
+
+    FileSystem.closeAll();
+    assertEquals(1, closed.size());
+    assertTrue(closed.contains(fsWithoutAuto));
+  }
+
 
   public void testCacheKeysAreCaseInsensitive()
     throws Exception
@@ -1038,6 +1073,20 @@ public class TestFileSystem extends TestCase {
     @Override
     public FileStatus getFileStatus(Path f) throws IOException {
       throw new IOException("not supposed to be here");
+    }
+  }
+
+  public static class TestShutdownFileSystem extends RawLocalFileSystem {
+    private Set<FileSystem> closedSet;
+
+    public void setClosedSet(Set<FileSystem> closedSet) {
+      this.closedSet = closedSet;
+    }
+    public void close() throws IOException {
+      if (closedSet != null) {
+        closedSet.add(this);
+      }
+      super.close();
     }
   }
 }

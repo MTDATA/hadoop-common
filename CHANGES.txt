@@ -4,6 +4,9 @@ Release 1.0.1 - 2012.02.12
 
   NEW FEATURES
 
+    HADOOP-4829. Allow FileSystem shutdown hook to be disabled.
+    (Todd Lipcon via tomwhite)
+
   IMPROVEMENTS
 
     MAPREDUCE-3607. Port missing new API mapreduce lib classes to 1.x. (tomwhite)
