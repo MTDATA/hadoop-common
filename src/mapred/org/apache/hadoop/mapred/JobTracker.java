@@ -207,8 +207,9 @@ public class JobTracker implements MRConstants, InterTrackerProtocol,
   private static final int FS_ACCESS_RETRY_PERIOD = 10000;
   static final String JOB_INFO_FILE = "job-info";
   private DNSToSwitchMapping dnsToSwitchMapping;
-  private NetworkTopology clusterMap = new NetworkTopology();
+  private NetworkTopology clusterMap;
   private int numTaskCacheLevels; // the max level to which we cache tasks
+  private boolean isNodeGroupAware;
   /**
    * {@link #nodesAtMaxLevel} is using the keySet from {@link ConcurrentHashMap}
    * so that it can be safely written to and iterated on via 2 separate threads.
@@ -2293,6 +2294,11 @@ public class JobTracker implements MRConstants, InterTrackerProtocol,
     LOG.info("Starting jobtracker with owner as " +
         getMROwner().getShortUserName());
 
+    // Create network topology
+    clusterMap = (NetworkTopology) ReflectionUtils.newInstance(
+            conf.getClass("net.topology.impl", NetworkTopology.class,
+                NetworkTopology.class), conf);
+
     // Create the scheduler
     Class<? extends TaskScheduler> schedulerClass
       = conf.getClass("mapred.jobtracker.taskScheduler",
@@ -2474,7 +2480,9 @@ public class JobTracker implements MRConstants, InterTrackerProtocol,
             DNSToSwitchMapping.class), conf);
     this.numTaskCacheLevels = conf.getInt("mapred.task.cache.levels", 
         NetworkTopology.DEFAULT_HOST_LEVEL);
-
+    this.isNodeGroupAware = conf.getBoolean(
+            "mapred.jobtracker.nodegroup.aware", false);
+    
     plugins = conf.getInstances("mapreduce.jobtracker.plugins",
             ServicePlugin.class);
     for (ServicePlugin p : plugins) {
@@ -3287,7 +3295,9 @@ public class JobTracker implements MRConstants, InterTrackerProtocol,
   public int getNumberOfUniqueHosts() {
     return uniqueHostsMap.size();
   }
-  
+  public boolean isNodeGroupAware() {
+    return isNodeGroupAware;
+  }
   public void addJobInProgressListener(JobInProgressListener listener) {
     jobInProgressListeners.add(listener);
   }
@@ -3432,7 +3442,7 @@ public class JobTracker implements MRConstants, InterTrackerProtocol,
         }
       }
     }
-      
+
     // Check for tasks to be killed
     List<TaskTrackerAction> killTasksList = getTasksToKill(trackerName);
     if (killTasksList != null) {
