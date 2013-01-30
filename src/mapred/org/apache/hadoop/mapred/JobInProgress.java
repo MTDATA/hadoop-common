@@ -1737,6 +1737,7 @@ public class JobInProgress {
     //
     // So to simplify, increment the data locality counter whenever there is 
     // data locality.
+    Locality locality = Locality.OFF_SWITCH;
     if (tip.isMapTask() && !tip.isJobSetupTask() && !tip.isJobCleanupTask()) {
       // increment the data locality counter for maps
       Node tracker = jobtracker.getNode(tts.getHost());
@@ -1756,34 +1757,42 @@ public class JobInProgress {
           }
         }
       }
-      logAndIncreJobCounters(tip, level, jobtracker.isNodeGroupAware());
+      locality = logAndIncreJobCounters(tip, level, jobtracker.isNodeGroupAware());
     }
+    // Set locality
+    tip.setTaskAttemptLocality(id, locality);
+
+    // Set avataar
+    Avataar avataar = (tip.getActiveTasks().size() > 1) ? Avataar.SPECULATIVE :
+        Avataar.VIRGIN;
+    tip.setTaskAttemptAvataar(id, avataar);
   }
 
-  private void logAndIncreJobCounters(TaskInProgress tip, int level, 
+  private Locality logAndIncreJobCounters(TaskInProgress tip, int level, 
       boolean isNodeGroupAware) {
     switch (level) {
       case 0:
         logAndIncrDataLocalMaps(tip);
-        break;
+        return Locality.NODE_LOCAL;
       case 1:
         if (isNodeGroupAware) {
           logAndIncrNodeGroupLocalMaps(tip);
+          return Locality.GROUP_LOCAL;
         } else {
           logAndIncrRackLocalMaps(tip);
+          return Locality.RACK_LOCAL;
         }
-        break;
       case 2:
         if (isNodeGroupAware) {
           logAndIncrRackLocalMaps(tip);
+          return Locality.RACK_LOCAL;
         }
-        break;
       default:
         // check if there is any locality
         if (level != this.maxLevel) {
           logAndIncrOtherLocalMaps(tip, level);
         }
-        break;
+        return Locality.OFF_SWITCH;
     }
   }
 
@@ -2564,22 +2573,27 @@ public class JobInProgress {
       this.jobtracker.getTaskTrackerStatus(status.getTaskTracker());
     String trackerHostname = jobtracker.getNode(ttStatus.getHost()).toString();
     String taskType = getTaskType(tip);
+    TaskAttemptID taskAttemptId = status.getTaskID();
+    Locality locality = checkLocality(tip, taskAttemptId);
+    Avataar avataar = checkAvataar(tip, taskAttemptId);
     if (status.getIsMap()){
-      JobHistory.MapAttempt.logStarted(status.getTaskID(), status.getStartTime(), 
+      JobHistory.MapAttempt.logStarted(taskAttemptId, status.getStartTime(), 
                                        status.getTaskTracker(), 
-                                       ttStatus.getHttpPort(), 
-                                       taskType); 
-      JobHistory.MapAttempt.logFinished(status.getTaskID(), status.getFinishTime(), 
+                                       ttStatus.getHttpPort(),
+                                       taskType,locality, avataar);
+      JobHistory.MapAttempt.logFinished(taskAttemptId, status.getFinishTime(), 
                                         trackerHostname, taskType,
                                         status.getStateString(), 
                                         status.getCounters()); 
     }else{
-      JobHistory.ReduceAttempt.logStarted( status.getTaskID(), status.getStartTime(), 
+      JobHistory.ReduceAttempt.logStarted(taskAttemptId, status.getStartTime(), 
                                           status.getTaskTracker(),
                                           ttStatus.getHttpPort(), 
-                                          taskType); 
-      JobHistory.ReduceAttempt.logFinished(status.getTaskID(), status.getShuffleFinishTime(),
-                                           status.getSortFinishTime(), status.getFinishTime(), 
+                                          taskType, locality, avataar);
+      JobHistory.ReduceAttempt.logFinished(taskAttemptId,
+                                           status.getShuffleFinishTime(),
+                                           status.getSortFinishTime(),
+                                           status.getFinishTime(),
                                            trackerHostname, 
                                            taskType,
                                            status.getStateString(), 
@@ -3024,9 +3038,12 @@ public class JobInProgress {
     String diagInfo = taskDiagnosticInfo == null ? "" :
       StringUtils.arrayToString(taskDiagnosticInfo.toArray(new String[0]));
     String taskType = getTaskType(tip);
+    TaskAttemptID taskAttemptId = status.getTaskID();
+    Locality locality = checkLocality(tip, taskAttemptId);
+    Avataar avataar = checkAvataar(tip, taskAttemptId);
     if (taskStatus.getIsMap()) {
       JobHistory.MapAttempt.logStarted(taskid, startTime, 
-        taskTrackerName, taskTrackerPort, taskType);
+        taskTrackerName, taskTrackerPort, taskType, locality, avataar);
       if (taskStatus.getRunState() == TaskStatus.State.FAILED) {
         JobHistory.MapAttempt.logFailed(taskid, finishTime,
           taskTrackerHostName, diagInfo, taskType);
@@ -3036,7 +3053,7 @@ public class JobInProgress {
       }
     } else {
       JobHistory.ReduceAttempt.logStarted(taskid, startTime, 
-        taskTrackerName, taskTrackerPort, taskType);
+        taskTrackerName, taskTrackerPort, taskType, locality, avataar);
       if (taskStatus.getRunState() == TaskStatus.State.FAILED) {
         JobHistory.ReduceAttempt.logFailed(taskid, finishTime,
           taskTrackerHostName, diagInfo, taskType);
@@ -3130,6 +3147,22 @@ public class JobInProgress {
         }
       }
     }
+  }
+
+  private Locality checkLocality(TaskInProgress tip, TaskAttemptID taskAttemptId) {
+    Locality locality = tip.getTaskAttemptLocality(taskAttemptId);
+    if (locality == null) {
+      locality = Locality.OFF_SWITCH;
+    }
+    return locality;
+  }
+
+  private Avataar checkAvataar(TaskInProgress tip, TaskAttemptID taskAttemptId) {
+    Avataar avataar = tip.getTaskAttemptAvataar(taskAttemptId);
+    if (avataar == null) {
+      avataar = Avataar.VIRGIN;
+    }
+    return avataar;
   }
 
   void killSetupTip(boolean isMap) {

@@ -37,6 +37,11 @@ public class JobSubmittedEvent implements HistoryEvent {
   private long submitTime;
   private String jobConfPath;
   private Map<JobACL, AccessControlList> jobAcls;
+  private String queue;
+  private String workflowId;
+  private String workflowName;
+  private String workflowNodeName;
+  private String workflowAdjacencies;
 
   /**
    * @deprecated Use
@@ -47,7 +52,21 @@ public class JobSubmittedEvent implements HistoryEvent {
   public JobSubmittedEvent(JobID id, String jobName, String userName,
       long submitTime, String jobConfPath) {
     this(id, jobName, userName, submitTime, jobConfPath,
-        new HashMap<JobACL, AccessControlList>());
+        new HashMap<JobACL, AccessControlList>(), null, "", "", "", "");
+  }
+
+  /**
+   * @deprecated Use
+   *             {@link #JobSubmittedEvent(JobID, String, String, long, String,
+   *             Map, String)}
+   *             instead.
+   */
+  @Deprecated
+  public JobSubmittedEvent(JobID id, String jobName, String userName,
+      long submitTime, String jobConfPath,
+      Map<JobACL, AccessControlList> jobACLs) {
+    this(id, jobName, userName, submitTime, jobConfPath, jobACLs, null,
+        "", "", "", "");
   }
 
   /**
@@ -58,16 +77,28 @@ public class JobSubmittedEvent implements HistoryEvent {
    * @param submitTime Time of submission
    * @param jobConfPath Path of the Job Configuration file
    * @param jobACLs The configured acls for the job.
+   * @param queue job queue name
+   * @param workflowId the workflow Id
+   * @param workflowName the workflow name
+   * @param workflowNodeName the workflow node name
+   * @param workflowAdjacencies the workflow adjacencies
    */
   public JobSubmittedEvent(JobID id, String jobName, String userName,
       long submitTime, String jobConfPath,
-      Map<JobACL, AccessControlList> jobACLs) {
+      Map<JobACL, AccessControlList> jobACLs, String queue,
+      String workflowId, String workflowName, String workflowNodeName,
+      String workflowAdjacencies) {
     this.jobId = id;
     this.jobName = jobName;
     this.userName = userName;
     this.submitTime = submitTime;
     this.jobConfPath = jobConfPath;
     this.jobAcls = jobACLs;
+    this.queue = queue;
+    this.workflowId = workflowId;
+    this.workflowName = workflowName;
+    this.workflowNodeName = workflowNodeName;
+    this.workflowAdjacencies = workflowAdjacencies;
   }
 
   /** Get the Job Id */
@@ -84,7 +115,27 @@ public class JobSubmittedEvent implements HistoryEvent {
   public Map<JobACL, AccessControlList> getJobAcls() {
     return jobAcls;
   }
-  
+  /** Get the acls configured for the job **/
+  public String getJobQueueName() {
+    return queue;
+  }
+  /** Get the workflow Id */
+  public String getWorkflowId() {
+    return workflowId;
+  }
+  /** Get the workflow name */
+  public String getWorkflowName() {
+    return workflowName;
+  }
+  /** Get the workflow node name */
+  public String getWorkflowNodeName() {
+    return workflowNodeName;
+  }
+  /** Get the workflow adjacencies */
+  public String getWorkflowAdjacencies() {
+    return workflowAdjacencies;
+  }
+
   /** Get the event type */
   public EventType getEventType() { return EventType.JOB_SUBMITTED; }
 
