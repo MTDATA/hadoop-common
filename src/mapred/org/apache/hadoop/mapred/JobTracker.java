@@ -102,6 +102,7 @@ import org.apache.hadoop.security.authorize.ServiceAuthorizationManager;
 import org.apache.hadoop.security.token.Token;
 import org.apache.hadoop.util.HostsFileReader;
 import org.apache.hadoop.util.ReflectionUtils;
+import org.apache.hadoop.util.ServicePlugin;
 import org.apache.hadoop.util.StringUtils;
 import org.apache.hadoop.util.VersionInfo;
 
@@ -220,6 +221,8 @@ public class JobTracker implements MRConstants, InterTrackerProtocol,
   private final TaskScheduler taskScheduler;
   private final List<JobInProgressListener> jobInProgressListeners =
     new CopyOnWriteArrayList<JobInProgressListener>();
+
+  private List<ServicePlugin> plugins;
 
   private static final LocalDirAllocator lDirAlloc = 
                               new LocalDirAllocator("mapred.local.dir");
@@ -2474,6 +2477,18 @@ public class JobTracker implements MRConstants, InterTrackerProtocol,
 
     //initializes the job status store
     completedJobStatusStore = new CompletedJobStatusStore(conf, aclsManager);
+
+    plugins = conf.getInstances("mapreduce.jobtracker.plugins",
+            ServicePlugin.class);
+    for (ServicePlugin p : plugins) {
+      try {
+          p.start(this);
+          LOG.info("Started plug-in " + p + " of type " + p.getClass());
+        } catch (Throwable t) {
+          LOG.warn("ServicePlugin " + p + " of type " + p.getClass()
+                  + " could not be started", t);
+        }
+    }
   }
 
   private static SimpleDateFormat getDateFormat() {
@@ -2616,6 +2631,17 @@ public class JobTracker implements MRConstants, InterTrackerProtocol,
   }
 
   void close() throws IOException {
+    if (plugins != null) {
+      for (ServicePlugin p : plugins) {
+          try {
+              p.stop();
+              LOG.info("Stopped plug-in " + p + " of type " + p.getClass());
+            } catch (Throwable t) {
+              LOG.warn("ServicePlugin " + p + " of type " + p.getClass()
+                      + " could not be stopped", t);
+            }
+        }
+    }
     if (this.infoServer != null) {
       LOG.info("Stopping infoServer");
       try {
