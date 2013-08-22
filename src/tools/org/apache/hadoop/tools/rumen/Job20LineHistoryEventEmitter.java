@@ -237,13 +237,16 @@ public class Job20LineHistoryEventEmitter extends HistoryEventEmitter {
       String failedReduces = line.get("FAILED_REDUCES");
 
       String counters = line.get("COUNTERS");
+      String mapCounters = line.get("MAP_COUNTERS");
+      String reduceCounters = line.get("REDUCE_COUNTERS");
 
       if (status != null && status.equalsIgnoreCase("success")
           && finishTime != null && finishedMaps != null
           && finishedReduces != null) {
-        return new JobFinishedEvent(jobID, Long.parseLong(finishTime), Integer
+         return new JobFinishedEvent(jobID, Long.parseLong(finishTime), Integer
             .parseInt(finishedMaps), Integer.parseInt(finishedReduces), Integer
-            .parseInt(failedMaps), Integer.parseInt(failedReduces), null, null,
+            .parseInt(failedMaps), Integer.parseInt(failedReduces), 
+            maybeParseCounters(mapCounters), maybeParseCounters(reduceCounters),
             maybeParseCounters(counters));
       }
 
