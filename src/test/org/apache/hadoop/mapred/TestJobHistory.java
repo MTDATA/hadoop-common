@@ -381,6 +381,23 @@ public class TestJobHistory extends TestCase {
                    (status.equals("SUCCESS") || status.equals("FAILED") ||
                     status.equals("KILLED")));
 
+        // Validate task Avataar
+        String avataar = attempt.get(Keys.AVATAAR);
+        assertTrue("Unexpected LOCALITY \"" + avataar + "\" is seen in " +
+            " history file for task attempt " + id,
+            (avataar.equals("VIRGIN") || avataar.equals("SPECULATIVE"))
+        );
+        
+        // Map Task Attempts should have valid LOCALITY
+        if (type.equals("MAP")) {
+          String locality = attempt.get(Keys.LOCALITY);
+          assertTrue("Unexpected LOCALITY \"" + locality + "\" is seen in " +
+              " history file for task attempt " + id,
+              (locality.equals("NODE_LOCAL") || locality.equals("GROUP_LOCAL") ||
+                  locality.equals("RACK_LOCAL") || locality.equals("OFF_SWITCH"))
+          );
+        }
+ 
         // Reduce Task Attempts should have valid SHUFFLE_FINISHED time and
         // SORT_FINISHED time
         if (type.equals("REDUCE") && status.equals("SUCCESS")) {
@@ -823,6 +840,18 @@ public class TestJobHistory extends TestCase {
     
     // Validate the job queue name
     assertTrue(jobInfo.getJobQueue().equals(conf.getQueueName()));
+
+    // Validate the workflow properties
+    assertTrue(jobInfo.get(Keys.WORKFLOW_ID).equals(
+        conf.get(JobConf.WORKFLOW_ID, "")));
+    assertTrue(jobInfo.get(Keys.WORKFLOW_NAME).equals(
+        conf.get(JobConf.WORKFLOW_NAME, "")));
+    assertTrue(jobInfo.get(Keys.WORKFLOW_NODE_NAME).equals(
+        conf.get(JobConf.WORKFLOW_NODE_NAME, "")));
+    assertTrue(jobInfo.get(Keys.WORKFLOW_ADJACENCIES).equals(
+        JobHistory.JobInfo.getWorkflowAdjacencies(conf)));
+    assertTrue(jobInfo.get(Keys.WORKFLOW_TAGS).equals(
+        conf.get(JobConf.WORKFLOW_TAGS, "")));
   }
 
   public void testDoneFolderOnHDFS() throws IOException {
@@ -980,7 +1009,21 @@ public class TestJobHistory extends TestCase {
       // no queue admins for default queue
       conf.set(QueueManager.toFullPropertyName(
           "default", QueueACL.ADMINISTER_JOBS.getAclName()), " ");
-      
+
+      // set workflow properties
+      conf.set(JobConf.WORKFLOW_ID, "workflowId1");
+      conf.set(JobConf.WORKFLOW_NAME, "workflowName1");
+      String workflowNodeName = "A";
+      conf.set(JobConf.WORKFLOW_NODE_NAME, workflowNodeName);
+      conf.set(JobConf.WORKFLOW_ADJACENCY_PREFIX_STRING + workflowNodeName,
+          "BC");
+      conf.set(JobConf.WORKFLOW_ADJACENCY_PREFIX_STRING + workflowNodeName,
+          "DEF");
+      conf.set(JobConf.WORKFLOW_ADJACENCY_PREFIX_STRING + "DEF", "G");
+      conf.set(JobConf.WORKFLOW_ADJACENCY_PREFIX_STRING + "Z",
+          workflowNodeName);
+      conf.set(JobConf.WORKFLOW_TAGS, "tag1,tag2");
+
       mr = new MiniMRCluster(2, "file:///", 3, null, null, conf);
 
       // run the TCs

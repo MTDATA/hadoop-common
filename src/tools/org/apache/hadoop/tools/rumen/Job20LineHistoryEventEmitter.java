@@ -65,6 +65,27 @@ public class Job20LineHistoryEventEmitter extends HistoryEventEmitter {
       String jobConf = line.get("JOBCONF");
       String user = line.get("USER");
       String jobName = line.get("JOBNAME");
+      String queueName = line.get("JOB_QUEUE");
+      String workflowId = line.get("WORKFLOW_ID");
+      if (workflowId == null) {
+        workflowId = "";
+      }
+      String workflowName = line.get("WORKFLOW_NAME");
+      if (workflowName == null) {
+        workflowName = "";
+      }
+      String workflowNodeName = line.get("WORKFLOW_NODE_NAME");
+      if (workflowNodeName == null) {
+        workflowNodeName = "";
+      }
+      String workflowAdjacencies = line.get("WORKFLOW_ADJACENCIES");
+      if (workflowAdjacencies == null) {
+        workflowAdjacencies = "";
+      }
+      String workflowTags = line.get("WORKFLOW_TAGS");
+      if (workflowTags == null) {
+        workflowTags = "";
+      }
 
       if (submitTime != null) {
         Job20LineHistoryEventEmitter that =
@@ -74,8 +95,10 @@ public class Job20LineHistoryEventEmitter extends HistoryEventEmitter {
 
         Map<JobACL, AccessControlList> jobACLs =
           new HashMap<JobACL, AccessControlList>();
-        return new JobSubmittedEvent(jobID, jobName, user == null ? "nulluser"
-            : user, that.originalSubmitTime, jobConf, jobACLs);
+        return new JobSubmittedEvent(jobID, jobName,
+            user == null ? "nulluser" : user, that.originalSubmitTime,
+            jobConf, jobACLs, queueName, workflowId, workflowName,
+            workflowNodeName, workflowAdjacencies, workflowTags);
       }
 
       return null;
@@ -214,13 +237,16 @@ public class Job20LineHistoryEventEmitter extends HistoryEventEmitter {
       String failedReduces = line.get("FAILED_REDUCES");
 
       String counters = line.get("COUNTERS");
+      String mapCounters = line.get("MAP_COUNTERS");
+      String reduceCounters = line.get("REDUCE_COUNTERS");
 
       if (status != null && status.equalsIgnoreCase("success")
           && finishTime != null && finishedMaps != null
           && finishedReduces != null) {
         return new JobFinishedEvent(jobID, Long.parseLong(finishTime), Integer
             .parseInt(finishedMaps), Integer.parseInt(finishedReduces), Integer
-            .parseInt(failedMaps), Integer.parseInt(failedReduces), null, null,
+            .parseInt(failedMaps), Integer.parseInt(failedReduces), 
+            maybeParseCounters(mapCounters), maybeParseCounters(reduceCounters),
             maybeParseCounters(counters));
       }
 

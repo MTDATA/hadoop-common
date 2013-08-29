@@ -47,7 +47,6 @@ import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.io.Text;
 import org.apache.hadoop.mapred.CleanupQueue.PathDeletionContext;
 import org.apache.hadoop.mapred.Counters.CountersExceededException;
-import org.apache.hadoop.mapred.Counters.Group;
 import org.apache.hadoop.mapred.JobHistory.Values;
 import org.apache.hadoop.mapreduce.JobContext;
 import org.apache.hadoop.mapreduce.JobSubmissionFiles;
@@ -70,7 +69,7 @@ import org.apache.hadoop.util.StringUtils;
 
 /*************************************************************
  * JobInProgress maintains all the info for keeping
- * a Job on the straight and narrow.  It keeps its JobProfile
+ * a Job on the straight and narrow. It keeps its JobProfile
  * and its latest JobStatus, plus a set of tables for 
  * doing bookkeeping of its Tasks.
  * ***********************************************************
@@ -255,7 +254,6 @@ public class JobInProgress {
   private String submitHostAddress;
   private String user;
   private String historyFile = "";
-  private boolean historyFileCopied;
   
   // Per-job counters
   public static enum Counter { 
@@ -265,6 +263,7 @@ public class JobInProgress {
     TOTAL_LAUNCHED_REDUCES,
     OTHER_LOCAL_MAPS,
     DATA_LOCAL_MAPS,
+    NODEGROUP_LOCAL_MAPS,
     RACK_LOCAL_MAPS,
     SLOTS_MILLIS_MAPS,
     SLOTS_MILLIS_REDUCES,
@@ -519,7 +518,7 @@ public class JobInProgress {
   public void cleanUpMetrics() {
     // per job metrics is disabled for now.
   }
-    
+
   private void printCache (Map<Node, List<TaskInProgress>> cache) {
     LOG.info("The taskcache info:");
     for (Map.Entry<Node, List<TaskInProgress>> n : cache.entrySet()) {
@@ -701,8 +700,8 @@ public class JobInProgress {
     TaskSplitMetaInfo[] splits = createSplits(jobId);
     if (numMapTasks != splits.length) {
       throw new IOException("Number of maps in JobConf doesn't match number of " +
-      		"recieved splits for job " + jobId + "! " +
-      		"numMapTasks=" + numMapTasks + ", #splits=" + splits.length);
+          "recieved splits for job " + jobId + "! " +
+          "numMapTasks=" + numMapTasks + ", #splits=" + splits.length);
     }
     numMapTasks = splits.length;
 
@@ -1307,27 +1306,49 @@ public class JobInProgress {
                                             int clusterSize, 
                                             int numUniqueHosts
                                            ) throws IOException {
-    if (status.getRunState() != JobStatus.RUNNING) {
+    return obtainNewMapTaskCommon(tts, clusterSize, numUniqueHosts, 
+        anyCacheLevel);
+  }
+
+  /**
+   * Return a MapTask with locality level that smaller or equal than a given
+   * locality level to tasktracker.
+   * 
+   * @param tts The task tracker that is asking for a task
+   * @param clusterSize The number of task trackers in the cluster
+   * @param numUniqueHosts The number of hosts that run task trackers
+   * @param avgProgress The average progress of this kind of task in this job
+   * @param maxCacheLevel The maximum topology level until which to schedule
+   *                      maps.
+   * @return the index in tasks of the selected task (or -1 for no task)
+   * @throws IOException
+   */
+  public synchronized Task obtainNewMapTaskCommon(
+      TaskTrackerStatus tts, int clusterSize, int numUniqueHosts, 
+      int maxCacheLevel) throws IOException {
+    if (!tasksInited) {
       LOG.info("Cannot create task split for " + profile.getJobID());
       try { throw new IOException("state = " + status.getRunState()); }
       catch (IOException ioe) {ioe.printStackTrace();}
       return null;
     }
-        
-    int target = findNewMapTask(tts, clusterSize, numUniqueHosts, anyCacheLevel,
+
+    int target = findNewMapTask(tts, clusterSize, numUniqueHosts, maxCacheLevel, 
                                 status.mapProgress());
     if (target == -1) {
       return null;
     }
-    
+
     Task result = maps[target].getTaskToRun(tts.getTrackerName());
     if (result != null) {
       addRunningTaskToTIP(maps[target], result.getTaskID(), tts, true);
-      resetSchedulingOpportunities();
+      // DO NOT reset for off-switch!
+      if (maxCacheLevel != NON_LOCAL_CACHE_LEVEL) {
+        resetSchedulingOpportunities();
+      }
     }
-
     return result;
-  }    
+  }
 
   /*
    * Return task cleanup attempt if any, to run on a given tracker
@@ -1370,78 +1391,22 @@ public class JobInProgress {
   public synchronized Task obtainNewNodeLocalMapTask(TaskTrackerStatus tts,
                                                      int clusterSize,
                                                      int numUniqueHosts)
-  throws IOException {
-    if (!tasksInited) {
-      LOG.info("Cannot create task split for " + profile.getJobID());
-      try { throw new IOException("state = " + status.getRunState()); }
-      catch (IOException ioe) {ioe.printStackTrace();}
-      return null;
-    }
-
-    int target = findNewMapTask(tts, clusterSize, numUniqueHosts, 1, 
-                                status.mapProgress());
-    if (target == -1) {
-      return null;
-    }
-
-    Task result = maps[target].getTaskToRun(tts.getTrackerName());
-    if (result != null) {
-      addRunningTaskToTIP(maps[target], result.getTaskID(), tts, true);
-      resetSchedulingOpportunities();
-    }
-
-    return result;
+      throws IOException {
+    return obtainNewMapTaskCommon(tts, clusterSize, numUniqueHosts, 1);
   }
   
   public synchronized Task obtainNewNodeOrRackLocalMapTask(
       TaskTrackerStatus tts, int clusterSize, int numUniqueHosts)
   throws IOException {
-    if (!tasksInited) {
-      LOG.info("Cannot create task split for " + profile.getJobID());
-      try { throw new IOException("state = " + status.getRunState()); }
-      catch (IOException ioe) {ioe.printStackTrace();}
-      return null;
-    }
-
-    int target = findNewMapTask(tts, clusterSize, numUniqueHosts, maxLevel, 
-                                status.mapProgress());
-    if (target == -1) {
-      return null;
-    }
-
-    Task result = maps[target].getTaskToRun(tts.getTrackerName());
-    if (result != null) {
-      addRunningTaskToTIP(maps[target], result.getTaskID(), tts, true);
-      resetSchedulingOpportunities();
-    }
-
-    return result;
+    return obtainNewMapTaskCommon(tts, clusterSize, numUniqueHosts, maxLevel);
   }
   
   public synchronized Task obtainNewNonLocalMapTask(TaskTrackerStatus tts,
                                                     int clusterSize, 
                                                     int numUniqueHosts)
-  throws IOException {
-    if (!tasksInited) {
-      LOG.info("Cannot create task split for " + profile.getJobID());
-      try { throw new IOException("state = " + status.getRunState()); }
-      catch (IOException ioe) {ioe.printStackTrace();}
-      return null;
-    }
-
-    int target = findNewMapTask(tts, clusterSize, numUniqueHosts, 
-                                NON_LOCAL_CACHE_LEVEL, status.mapProgress());
-    if (target == -1) {
-      return null;
-    }
-
-    Task result = maps[target].getTaskToRun(tts.getTrackerName());
-    if (result != null) {
-      addRunningTaskToTIP(maps[target], result.getTaskID(), tts, true);
-      // DO NOT reset for off-switch!
-    }
-
-    return result;
+      throws IOException {
+    return obtainNewMapTaskCommon(tts, clusterSize, numUniqueHosts, 
+        NON_LOCAL_CACHE_LEVEL);
   }
   
   public void schedulingOpportunity() {
@@ -1725,7 +1690,7 @@ public class JobInProgress {
     // keeping the earlier ordering intact
     String name;
     String splits = "";
-    Enum counter = null;
+    Enum<Counter> counter = null;
     if (tip.isJobSetupTask()) {
       launchedSetup = true;
       name = Values.SETUP.name();
@@ -1772,6 +1737,7 @@ public class JobInProgress {
     //
     // So to simplify, increment the data locality counter whenever there is 
     // data locality.
+    Locality locality = Locality.OFF_SWITCH;
     if (tip.isMapTask() && !tip.isJobSetupTask() && !tip.isJobCleanupTask()) {
       // increment the data locality counter for maps
       Node tracker = jobtracker.getNode(tts.getHost());
@@ -1791,24 +1757,63 @@ public class JobInProgress {
           }
         }
       }
-      switch (level) {
-      case 0 :
-        LOG.info("Choosing data-local task " + tip.getTIPId());
-        jobCounters.incrCounter(Counter.DATA_LOCAL_MAPS, 1);
-        break;
+      locality = logAndIncreJobCounters(tip, level, jobtracker.isNodeGroupAware());
+    }
+    // Set locality
+    tip.setTaskAttemptLocality(id, locality);
+
+    // Set avataar
+    Avataar avataar = (tip.getActiveTasks().size() > 1) ? Avataar.SPECULATIVE :
+        Avataar.VIRGIN;
+    tip.setTaskAttemptAvataar(id, avataar);
+  }
+
+  private Locality logAndIncreJobCounters(TaskInProgress tip, int level, 
+      boolean isNodeGroupAware) {
+    switch (level) {
+      case 0:
+        logAndIncrDataLocalMaps(tip);
+        return Locality.NODE_LOCAL;
       case 1:
-        LOG.info("Choosing rack-local task " + tip.getTIPId());
-        jobCounters.incrCounter(Counter.RACK_LOCAL_MAPS, 1);
-        break;
-      default :
+        if (isNodeGroupAware) {
+          logAndIncrNodeGroupLocalMaps(tip);
+          return Locality.GROUP_LOCAL;
+        } else {
+          logAndIncrRackLocalMaps(tip);
+          return Locality.RACK_LOCAL;
+        }
+      case 2:
+        if (isNodeGroupAware) {
+          logAndIncrRackLocalMaps(tip);
+          return Locality.RACK_LOCAL;
+        }
+      default:
         // check if there is any locality
         if (level != this.maxLevel) {
-          LOG.info("Choosing cached task at level " + level + tip.getTIPId());
-          jobCounters.incrCounter(Counter.OTHER_LOCAL_MAPS, 1);
+          logAndIncrOtherLocalMaps(tip, level);
         }
-        break;
-      }
+        return Locality.OFF_SWITCH;
     }
+  }
+
+  private void logAndIncrOtherLocalMaps(TaskInProgress tip, int level) {
+    LOG.info("Choosing cached task at level " + level + tip.getTIPId());
+    jobCounters.incrCounter(Counter.OTHER_LOCAL_MAPS, 1);
+  }
+
+  private void logAndIncrNodeGroupLocalMaps(TaskInProgress tip) {
+    LOG.info("Choosing nodeGroup-local task " + tip.getTIPId());
+    jobCounters.incrCounter(Counter.NODEGROUP_LOCAL_MAPS, 1);
+  }
+
+  private void logAndIncrRackLocalMaps(TaskInProgress tip) {
+    LOG.info("Choosing rack-local task " + tip.getTIPId());
+    jobCounters.incrCounter(Counter.RACK_LOCAL_MAPS, 1);
+  }
+
+  private void logAndIncrDataLocalMaps(TaskInProgress tip) {
+    LOG.info("Choosing data-local task " + tip.getTIPId());
+    jobCounters.incrCounter(Counter.DATA_LOCAL_MAPS, 1);
   }
 
   void setFirstTaskLaunchTime(TaskInProgress tip) {
@@ -2568,22 +2573,27 @@ public class JobInProgress {
       this.jobtracker.getTaskTrackerStatus(status.getTaskTracker());
     String trackerHostname = jobtracker.getNode(ttStatus.getHost()).toString();
     String taskType = getTaskType(tip);
+    TaskAttemptID taskAttemptId = status.getTaskID();
+    Locality locality = checkLocality(tip, taskAttemptId);
+    Avataar avataar = checkAvataar(tip, taskAttemptId);
     if (status.getIsMap()){
-      JobHistory.MapAttempt.logStarted(status.getTaskID(), status.getStartTime(), 
+      JobHistory.MapAttempt.logStarted(taskAttemptId, status.getStartTime(), 
                                        status.getTaskTracker(), 
-                                       ttStatus.getHttpPort(), 
-                                       taskType); 
-      JobHistory.MapAttempt.logFinished(status.getTaskID(), status.getFinishTime(), 
+                                       ttStatus.getHttpPort(),
+                                       taskType,locality, avataar);
+      JobHistory.MapAttempt.logFinished(taskAttemptId, status.getFinishTime(), 
                                         trackerHostname, taskType,
                                         status.getStateString(), 
                                         status.getCounters()); 
     }else{
-      JobHistory.ReduceAttempt.logStarted( status.getTaskID(), status.getStartTime(), 
+      JobHistory.ReduceAttempt.logStarted(taskAttemptId, status.getStartTime(), 
                                           status.getTaskTracker(),
                                           ttStatus.getHttpPort(), 
-                                          taskType); 
-      JobHistory.ReduceAttempt.logFinished(status.getTaskID(), status.getShuffleFinishTime(),
-                                           status.getSortFinishTime(), status.getFinishTime(), 
+                                          taskType, locality, avataar);
+      JobHistory.ReduceAttempt.logFinished(taskAttemptId,
+                                           status.getShuffleFinishTime(),
+                                           status.getSortFinishTime(),
+                                           status.getFinishTime(),
                                            trackerHostname, 
                                            taskType,
                                            status.getStateString(), 
@@ -3028,9 +3038,12 @@ public class JobInProgress {
     String diagInfo = taskDiagnosticInfo == null ? "" :
       StringUtils.arrayToString(taskDiagnosticInfo.toArray(new String[0]));
     String taskType = getTaskType(tip);
+    TaskAttemptID taskAttemptId = status.getTaskID();
+    Locality locality = checkLocality(tip, taskAttemptId);
+    Avataar avataar = checkAvataar(tip, taskAttemptId);
     if (taskStatus.getIsMap()) {
       JobHistory.MapAttempt.logStarted(taskid, startTime, 
-        taskTrackerName, taskTrackerPort, taskType);
+        taskTrackerName, taskTrackerPort, taskType, locality, avataar);
       if (taskStatus.getRunState() == TaskStatus.State.FAILED) {
         JobHistory.MapAttempt.logFailed(taskid, finishTime,
           taskTrackerHostName, diagInfo, taskType);
@@ -3040,7 +3053,7 @@ public class JobInProgress {
       }
     } else {
       JobHistory.ReduceAttempt.logStarted(taskid, startTime, 
-        taskTrackerName, taskTrackerPort, taskType);
+        taskTrackerName, taskTrackerPort, taskType, locality, avataar);
       if (taskStatus.getRunState() == TaskStatus.State.FAILED) {
         JobHistory.ReduceAttempt.logFailed(taskid, finishTime,
           taskTrackerHostName, diagInfo, taskType);
@@ -3134,6 +3147,22 @@ public class JobInProgress {
         }
       }
     }
+  }
+
+  private Locality checkLocality(TaskInProgress tip, TaskAttemptID taskAttemptId) {
+    Locality locality = tip.getTaskAttemptLocality(taskAttemptId);
+    if (locality == null) {
+      locality = Locality.OFF_SWITCH;
+    }
+    return locality;
+  }
+
+  private Avataar checkAvataar(TaskInProgress tip, TaskAttemptID taskAttemptId) {
+    Avataar avataar = tip.getTaskAttemptAvataar(taskAttemptId);
+    if (avataar == null) {
+      avataar = Avataar.VIRGIN;
+    }
+    return avataar;
   }
 
   void killSetupTip(boolean isMap) {
